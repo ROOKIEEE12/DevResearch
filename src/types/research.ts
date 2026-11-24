@@ -83,6 +83,7 @@ export interface ResearchSession {
   brief?: ResearchBriefData;
   rawMarkdownBrief?: string;
   followUps: FollowUpMessage[];
+  warnings?: string[];
   errors?: string[];
 }
 

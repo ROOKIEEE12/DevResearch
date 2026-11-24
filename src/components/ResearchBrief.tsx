@@ -12,7 +12,8 @@ import {
   HelpCircle, 
   CheckCircle2, 
   XCircle, 
-  Flame
+  Flame,
+  AlertTriangle
 } from 'lucide-react';
 import { ResearchSession } from '@/types/research';
 import { formatDate } from '@/lib/utils';
@@ -104,6 +105,20 @@ export const ResearchBrief: React.FC<ResearchBriefProps> = ({
         <p className="text-xs text-zinc-500 dark:text-zinc-400 font-mono bg-zinc-50 dark:bg-zinc-950/60 p-2.5 rounded-xl border border-zinc-200/60 dark:border-zinc-800/60">
           <strong>Problem Context:</strong> {session.problem}
         </p>
+
+        {session.warnings && session.warnings.length > 0 && (
+          <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs space-y-1">
+            <div className="flex items-center gap-1.5 font-semibold">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>Source Connector Notices:</span>
+            </div>
+            <ul className="list-disc list-inside text-[11px] space-y-0.5 opacity-90 pl-1">
+              {session.warnings.map((w, wIdx) => (
+                <li key={wIdx}>{w}</li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
 
       {/* 1. Executive Summary */}
