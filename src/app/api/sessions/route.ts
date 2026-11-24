@@ -3,6 +3,9 @@ import fs from 'fs';
 import path from 'path';
 import { MOCK_SESSIONS } from '@/lib/mock-data';
 
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 const DATA_DIR = path.join(process.cwd(), 'data');
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 
