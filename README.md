@@ -78,7 +78,7 @@ We chose **Next.js 14 (App Router) + TypeScript** for both frontend and backend:
    ```
 
 3. **Open the application:**
-   Navigate to [http://localhost:3000](http://localhost:3000) in your browser.
+   Navigate to [http://localhost:3003](http://localhost:3003) in your browser.
 
 4. **What to test in Step 1:**
    - **Sample Queries:** Click any of the pre-built sample queries (e.g. *PostgreSQL partition vacuum deadlocks* or *Next.js App Router cache invalidation*).
