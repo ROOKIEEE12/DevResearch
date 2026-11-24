@@ -11,14 +11,42 @@ import { FollowUpChat } from '@/components/FollowUpChat';
 import { ExportModal } from '@/components/ExportModal';
 import { ResearchSession, SourceType, ResearchDepth, SubQuery, SourceItem, FollowUpMessage } from '@/types/research';
 import { MOCK_SESSIONS } from '@/lib/mock-data';
+import { loadSavedSessions, saveSessions, loadActiveSessionId, saveActiveSessionId } from '@/lib/storage';
 
 export default function Home() {
   const [sessions, setSessions] = useState<ResearchSession[]>(MOCK_SESSIONS);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [isStorageLoaded, setIsStorageLoaded] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [darkMode, setDarkMode] = useState(true);
   const [highlightedCitationId, setHighlightedCitationId] = useState<number | null>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+
+  // Load persisted research sessions and last active session from localStorage on mount
+  useEffect(() => {
+    const saved = loadSavedSessions();
+    setSessions(saved);
+
+    const savedActiveId = loadActiveSessionId();
+    if (savedActiveId && saved.some((s) => s.id === savedActiveId)) {
+      setActiveSessionId(savedActiveId);
+    }
+    setIsStorageLoaded(true);
+  }, []);
+
+  // Sync sessions to localStorage whenever sessions change
+  useEffect(() => {
+    if (isStorageLoaded) {
+      saveSessions(sessions);
+    }
+  }, [sessions, isStorageLoaded]);
+
+  // Sync activeSessionId to localStorage whenever it changes
+  useEffect(() => {
+    if (isStorageLoaded) {
+      saveActiveSessionId(activeSessionId);
+    }
+  }, [activeSessionId, isStorageLoaded]);
 
   // Live Research Progress Simulation / State
   const [isSearching, setIsSearching] = useState(false);
@@ -43,6 +71,7 @@ export default function Home() {
   // New research action
   const handleNewResearch = () => {
     setActiveSessionId(null);
+    saveActiveSessionId(null);
     setIsSearching(false);
   };
 
@@ -307,8 +336,13 @@ export default function Home() {
       followUps: [],
     };
 
-    setSessions((prev) => [newSession, ...prev]);
+    setSessions((prev) => {
+      const updated = [newSession, ...prev];
+      saveSessions(updated);
+      return updated;
+    });
     setActiveSessionId(newSessionId);
+    saveActiveSessionId(newSessionId);
     setIsSearching(false);
   };
 
@@ -367,21 +401,28 @@ export default function Home() {
 
   // Session rename
   const handleRenameSession = (id: string, newTitle: string) => {
-    setSessions((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, title: newTitle } : s))
-    );
+    setSessions((prev) => {
+      const updated = prev.map((s) => (s.id === id ? { ...s, title: newTitle } : s));
+      saveSessions(updated);
+      return updated;
+    });
   };
 
   // Session delete
   const handleDeleteSession = (id: string) => {
-    setSessions((prev) => prev.filter((s) => s.id !== id));
+    setSessions((prev) => {
+      const updated = prev.filter((s) => s.id !== id);
+      saveSessions(updated);
+      return updated;
+    });
     if (activeSessionId === id) {
       setActiveSessionId(null);
+      saveActiveSessionId(null);
     }
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-zinc-50 dark:bg-[#09090b] text-zinc-900 dark:text-zinc-100 transition-colors">
+    <div className="h-screen h-[100dvh] flex flex-col overflow-hidden bg-zinc-50 dark:bg-[#09090b] text-zinc-900 dark:text-zinc-100 transition-colors">
       {/* Top Navbar */}
       <Navbar
         isSidebarOpen={isSidebarOpen}
@@ -392,7 +433,7 @@ export default function Home() {
         hasActiveSession={activeSession !== null || isSearching}
       />
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden min-h-0">
         {/* Left Sidebar: Session History */}
         <Sidebar
           isOpen={isSidebarOpen}
@@ -400,6 +441,7 @@ export default function Home() {
           activeSessionId={activeSessionId}
           onSelectSession={(id) => {
             setActiveSessionId(id);
+            saveActiveSessionId(id);
             setIsSearching(false);
           }}
           onNewResearch={handleNewResearch}
@@ -408,7 +450,7 @@ export default function Home() {
         />
 
         {/* Main Content Area */}
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 h-full overflow-y-auto min-h-0 scroll-smooth">
           {/* View 1: Active Research Pipeline Animation */}
           {isSearching && (
             <div className="p-4 sm:p-8">
@@ -444,7 +486,7 @@ export default function Home() {
                 </div>
 
                 {/* Right Pane (5 or 4 cols): Sources List with Filters & Sorting */}
-                <div className="lg:col-span-5 xl:col-span-4 sticky top-6">
+                <div className="lg:col-span-5 xl:col-span-4 lg:sticky lg:top-4 lg:self-start">
                   <SourceList
                     sources={activeSession.sources}
                     highlightedCitationId={highlightedCitationId}

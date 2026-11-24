@@ -83,9 +83,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   if (!isOpen) return null;
 
   return (
-    <aside className="w-72 shrink-0 border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-900/40 flex flex-col h-[calc(100vh-3.5rem)] sticky top-14">
+    <aside className="w-72 shrink-0 border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-900/40 flex flex-col h-full overflow-hidden select-none">
       {/* Top action: New research */}
-      <div className="p-3 border-b border-zinc-200/80 dark:border-zinc-800/80 space-y-2.5">
+      <div className="shrink-0 p-3 border-b border-zinc-200/80 dark:border-zinc-800/80 space-y-2.5">
         <button
           onClick={onNewResearch}
           className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-all shadow-sm hover:shadow-indigo-500/20"
@@ -108,7 +108,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Session list */}
-      <div className="flex-1 overflow-y-auto p-2 space-y-1">
+      <div className="flex-1 overflow-y-auto min-h-0 p-2 space-y-1">
         <div className="flex items-center justify-between px-2 py-1 text-[11px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
           <div className="flex items-center gap-1.5">
             <History className="w-3 h-3" />
@@ -213,7 +213,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Footer */}
-      <div className="p-3 border-t border-zinc-200/80 dark:border-zinc-800/80 text-[11px] text-zinc-400 flex items-center justify-between">
+      <div className="shrink-0 p-3 border-t border-zinc-200/80 dark:border-zinc-800/80 text-[11px] text-zinc-400 flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <Database className="w-3 h-3 text-emerald-400" />
           <span>Local Storage: SQLite Ready</span>

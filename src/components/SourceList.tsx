@@ -69,7 +69,7 @@ export const SourceList: React.FC<SourceListProps> = ({
   return (
     <div className="flex flex-col h-full space-y-3">
       {/* Header & Controls */}
-      <div className="space-y-2.5 bg-white dark:bg-zinc-900 p-3 rounded-xl border border-zinc-200 dark:border-zinc-800">
+      <div className="shrink-0 space-y-2.5 bg-white dark:bg-zinc-900 p-3 rounded-xl border border-zinc-200 dark:border-zinc-800">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-1.5">
             <Layers className="w-4 h-4 text-indigo-500" />
@@ -186,7 +186,7 @@ export const SourceList: React.FC<SourceListProps> = ({
       </div>
 
       {/* Cards list */}
-      <div className="space-y-2.5 overflow-y-auto max-h-[calc(100vh-14rem)] pr-1">
+      <div className="flex-1 overflow-y-auto space-y-2.5 max-h-[calc(100vh-14rem)] pr-1 min-h-0">
         {sorted.length === 0 ? (
           <div className="text-center py-8 text-xs text-zinc-400 bg-white dark:bg-zinc-900/60 rounded-xl border border-zinc-200 dark:border-zinc-800">
             No sources match the selected filter.
