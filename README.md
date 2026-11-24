@@ -1,91 +1,129 @@
-# DevResearch: AI Research Assistant for Developers
+# DevResearch — AI Research Assistant for Developers
 
-DevResearch is an AI-powered technical research assistant built specifically for software engineers. A developer describes a complex technical problem (e.g. database deadlocks, distributed consensus edge cases, memory leaks), and the system decomposes the problem, searches across multiple authoritative sources (Web & official docs, research papers, GitHub issues, Reddit/Hacker News, and YouTube conference transcripts), and synthesizes a single, cited technical research brief with an interactive follow-up Q&A loop.
+DevResearch is a full-stack AI-powered technical research assistant built specifically for software engineers. A developer describes a complex technical problem (e.g. database deadlocks, distributed consensus edge cases, React Server Components performance), and the system:
+
+1. **Plans targeted sub-queries** using Anthropic Claude 3.5 Sonnet
+2. **Searches multiple official sources in parallel** (Web & official docs, arXiv & Semantic Scholar papers, GitHub issues & repos, Reddit & Hacker News, YouTube talks)
+3. **Deduplicates, scores credibility, and assigns citations** `[1]`, `[2]`, ...
+4. **Streams live progress via SSE** and synthesizes a structured research brief with inline citations, pros/cons, runnable code snippets, and open questions
+5. **Supports grounded follow-up Q&A**, persistent session history, and Markdown / PDF export
 
 ---
 
 ## Architecture: Why Next.js App Router Full-Stack?
 
-We chose **Next.js 14 (App Router) + TypeScript** for both frontend and backend:
-1. **Single Cohesive Repository:** No disjoint microservices or cross-language serialization bottlenecks between Python (FastAPI) and React. One command (`npm run dev`) boots the entire stack.
-2. **First-Class Edge / Node Streaming:** Next.js Route Handlers (`app/api/.../route.ts`) provide native Server-Sent Events (SSE) and Web Streams for real-time progressive synthesis and step progress updates.
-3. **Shared TypeScript Domain Types:** Data contracts for sources, citations, briefs, and query plans (`src/types/research.ts`) are shared between frontend components and backend connectors without code generation drift.
-4. **Lightweight & High Performance:** Fast REST connectors for arXiv, Semantic Scholar, GitHub, Hacker News, Reddit, Tavily, and YouTube can run with native `fetch` timeouts and connection pooling.
+We chose **Next.js 14 (App Router) + TypeScript + Tailwind CSS** for both frontend and backend:
+1. **Single Cohesive Repository:** One command (`npm run dev`) boots both UI and API routes with zero cross-language serialization overhead.
+2. **Native SSE Streaming:** Next.js Route Handlers (`src/app/api/research/route.ts`) stream live Server-Sent Events (`step`, `queries`, `sources`, `warning`, `brief`, `done`).
+3. **Shared TypeScript Contracts:** Types in `src/types/research.ts` are shared directly between React components, connectors, and Claude synthesis.
+4. **Graceful Degradation:** If any external source API hits rate limits or lacks an optional API key, the pipeline surfaces a non-fatal warning and continues with the remaining sources.
 
 ---
 
 ## Project Structure
 
 ```
-├── .env.example               # Environment variables template
-├── package.json               # Node.js dependencies and scripts
-├── tailwind.config.ts         # Tailwind CSS styling and theme configuration
-├── tsconfig.json              # TypeScript compilation configuration
+├── .env.example                     # Environment variables template
+├── package.json                     # Dependencies and scripts (runs on port 3003)
+├── scripts/
+│   └── test-connectors.ts           # Standalone CLI test suite for all 5 connectors
 └── src/
     ├── app/
-    │   ├── globals.css        # Global CSS, dark theme variables & print media styles
-    │   ├── layout.tsx         # Root layout with dark mode HTML wrapper
-    │   ├── page.tsx           # Main application view with dual-pane layout & state machine
-    │   └── api/               # Next.js Route Handlers for SSE streaming (Steps 2-5)
+    │   ├── globals.css              # Dark theme variables, scrollbars & print-to-PDF styles
+    │   ├── layout.tsx               # Root layout (dark mode default)
+    │   ├── page.tsx                 # Dual-pane workspace, SSE client & state management
+    │   └── api/
+    │       ├── research/route.ts    # POST: full SSE research pipeline (plan -> search -> synthesize)
+    │       ├── followup/route.ts    # POST: Claude follow-up Q&A grounded in retrieved sources
+    │       ├── connectors/route.ts  # GET/POST: direct multi-source connector endpoint
+    │       └── sessions/route.ts    # GET/POST: file-backed session persistence (data/sessions.json)
     ├── components/
-    │   ├── Navbar.tsx         # Brand logo, New Research CTA, dark mode toggle
-    │   ├── Sidebar.tsx        # Session history drawer, rename/delete actions & search
-    │   ├── SearchInput.tsx    # Technical problem input, source toggles, depth selector & samples
-    │   ├── ProgressStepper.tsx# Live 4-stage pipeline stepper (Planning, Searching, Deduplicating, Synthesizing)
-    │   ├── ResearchBrief.tsx  # Synthesized brief with executive summary, approaches, pros/cons, code & citations
-    │   ├── SourceCard.tsx     # Source evidence card with [n] badge, credibility rating & metadata
-    │   ├── SourceList.tsx     # Filterable right pane for evidence sources by type & sort order
-    │   ├── FollowUpChat.tsx   # Contextual follow-up Q&A grounded in retrieved sources
-    │   ├── ExportModal.tsx    # Markdown preview, copy to clipboard, and PDF print trigger
-    │   └── Icons.tsx          # Custom developer SVG icons (GitHub, YouTube)
+    │   ├── Navbar.tsx               # Brand logo, New Research CTA, dark mode toggle
+    │   ├── Sidebar.tsx              # Persistent history drawer (search, rename, delete)
+    │   ├── SearchInput.tsx          # Problem input, source toggles, depth selector & samples
+    │   ├── ProgressStepper.tsx      # Live 4-stage pipeline stepper
+    │   ├── ResearchBrief.tsx        # Executive summary, approaches, pros/cons, code & [n] citations
+    │   ├── SourceCard.tsx           # Evidence card with [n] badge, credibility & metadata
+    │   ├── SourceList.tsx           # Filterable & sortable evidence pane
+    │   ├── FollowUpChat.tsx         # Grounded follow-up Q&A chat
+    │   ├── ExportModal.tsx          # Markdown preview, copy, .md download & PDF print
+    │   └── Icons.tsx                # Custom GitHub and YouTube SVG icons
     ├── lib/
-    │   ├── mock-data.ts       # Rich sample research sessions and developer test queries
-    │   └── utils.ts           # Class merge, date formatting, and markdown generator
+    │   ├── synthesize.ts            # Claude query planning, brief synthesis & follow-up Q&A
+    │   ├── rateLimit.ts             # Sliding-window API rate limiter
+    │   ├── storage.ts               # Client localStorage persistence helpers
+    │   ├── mock-data.ts             # Sample technical queries and initial sessions
+    │   ├── utils.ts                 # Formatting and Markdown brief generator
+    │   └── connectors/
+    │       ├── types.ts             # Common SourceConnector interface
+    │       ├── cache.ts             # 15-minute TTL in-memory query cache
+    │       ├── fetchWithTimeout.ts  # AbortController timeout wrapper
+    │       ├── web.ts               # Tavily + Brave Search + official docs/SO scoring
+    │       ├── papers.ts            # arXiv Atom XML + Semantic Scholar Graph API
+    │       ├── github.ts            # GitHub REST Search API (Issues, PRs & Repos)
+    │       ├── reddit.ts            # Reddit public JSON API + Hacker News Algolia API
+    │       ├── youtube.ts           # YouTube Data API v3 search & video metadata
+    │       └── index.ts             # Parallel orchestrator, URL deduplication & ranking
     └── types/
-        └── research.ts        # Core TypeScript interfaces: Session, SourceItem, Brief, SubQuery
+        └── research.ts              # Core TypeScript interfaces
 ```
 
 ---
 
-## Build Plan Status
+## Required & Optional API Keys
 
-- [x] **Step 1: UI Skeleton (Completed)**
-  - Interactive search page with depth selector (`Quick`, `Standard`, `Deep`)
-  - Source toggles (Web, Papers, GitHub, Reddit/HN, YouTube)
-  - Real developer sample queries to auto-populate complex problems
-  - Animated live progress stepper simulating planning, multi-source search, and synthesis
-  - Dual-pane results page: Left = synthesized brief + follow-up chat, Right = evidence sources list
-  - Interactive citation badges `[1]`, `[2]` that jump to and highlight corresponding source cards
-  - History sidebar with search, rename, and delete functionality
-  - Export modal with Markdown preview, copy, download `.md`, and PDF print styling
-- [ ] **Step 2: Web + Papers Connectors**
-- [ ] **Step 3: Synthesis Pipeline (Claude 3.5 Sonnet streaming)**
-- [ ] **Step 4: Remaining Connectors (YouTube transcripts, Reddit/HN, GitHub)**
-- [ ] **Step 5: Persistent History & Export Finalization**
+Copy `.env.example` to `.env` and fill in your keys:
+
+| Variable | Required? | Purpose |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | **Required** | Claude 3.5 Sonnet for query planning, synthesis, and follow-up Q&A |
+| `ANTHROPIC_MODEL` | Optional | Defaults to `claude-3-5-sonnet-20241022` |
+| `TAVILY_API_KEY` | Recommended | Primary Web search connector (official docs, Stack Overflow, blogs) |
+| `BRAVE_SEARCH_API_KEY` | Optional | Fallback Web search connector if Tavily is not set |
+| `GITHUB_TOKEN` | Recommended | GitHub Personal Access Token (raises search limit from 10 to 30 req/min) |
+| `YOUTUBE_API_KEY` | Recommended | YouTube Data API v3 key for conference talks & deep-dive videos |
+| `SEMANTIC_SCHOLAR_API_KEY` | Optional | Higher rate limits on Semantic Scholar (arXiv requires no key) |
+
+> Reddit and Hacker News use open public REST endpoints (`reddit.com` JSON + `hn.algolia.com`) and require no API keys.
 
 ---
 
-## Quickstart & Testing Step 1
+## Setup & Running Locally
 
 1. **Install dependencies:**
    ```bash
    npm install
    ```
 
-2. **Start the local development server:**
+2. **Configure environment variables:**
+   ```bash
+   cp .env.example .env
+   # Add your ANTHROPIC_API_KEY and connector keys in .env
+   ```
+
+3. **Start the development server (runs on port 3003):**
    ```bash
    npm run dev
    ```
+   Open [http://localhost:3003](http://localhost:3003) in your browser.
 
-3. **Open the application:**
-   Navigate to [http://localhost:3003](http://localhost:3003) in your browser.
+4. **Test all 5 source connectors via CLI:**
+   ```bash
+   npx tsx scripts/test-connectors.ts
+   ```
 
-4. **What to test in Step 1:**
-   - **Sample Queries:** Click any of the pre-built sample queries (e.g. *PostgreSQL partition vacuum deadlocks* or *Next.js App Router cache invalidation*).
-   - **History Sidebar:** Click on past research sessions in the sidebar to view full synthesized briefs, code snippets, and evidence sources. Test renaming or deleting sessions.
-   - **Live Progress Stepper:** Type a problem or click a sample, adjust source toggles & depth, and click **"Start Research"**. Watch the animated pipeline advance through query planning, searching, deduplication, and synthesis.
-   - **Interactive Citations:** In the brief, click any `[1]` or `[2]` citation pill to smoothly scroll to and highlight the corresponding source card on the right.
-   - **Evidence Filters:** Use the source filter pills (`All`, `Web`, `Papers`, `GitHub`, `Reddit/HN`, `YouTube`) and the sorting dropdown (`Citation Order`, `Highest Credibility`, `Most Recent`).
-   - **Follow-up Chat:** Ask a question in the follow-up chat box below the brief (or click a suggestion pill).
-   - **Exporting:** Click **"Export Brief"** to inspect the generated Markdown, copy it, download `.md`, or trigger **"Print / Save as PDF"**.
-   - **Dark Mode:** Toggle dark/light mode in the top navbar.
+5. **Production build:**
+   ```bash
+   npm run build
+   npm run start
+   ```
+
+---
+
+## Build Plan Status
+
+- [x] **Step 1: UI Skeleton** — Dual-pane layout, search input, progress stepper, citation jump-to-source, dark mode
+- [x] **Step 2: Web + Papers Connectors** — Tavily/Brave + arXiv/Semantic Scholar with caching & timeouts
+- [x] **Step 3: Synthesis Pipeline** — Claude query planning, SSE streaming `/api/research`, grounded `/api/followup`
+- [x] **Step 4: Remaining Connectors** — GitHub Issues/Repos, Reddit + Hacker News, YouTube Data API v3
+- [x] **Step 5: History, Rate Limiting & Export** — Persistent localStorage + `/api/sessions` sync, sliding-window rate limiter, Markdown & print-to-PDF export, full README

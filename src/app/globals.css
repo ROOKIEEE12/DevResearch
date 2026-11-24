@@ -46,13 +46,15 @@ body {
 
 /* Print Styles for PDF export */
 @media print {
-  header, aside, .no-print, button, form {
-    display: none !important;
-  }
-
-  body {
+  html, body, main {
+    height: auto !important;
+    overflow: visible !important;
     background: #ffffff !important;
     color: #000000 !important;
+  }
+
+  header, aside, .no-print, button, form {
+    display: none !important;
   }
 
   .print-full-width {

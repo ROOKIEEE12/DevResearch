@@ -86,10 +86,17 @@ export default function Home() {
     setIsStorageLoaded(true);
   }, []);
 
-  // Sync sessions to localStorage whenever sessions change
+  // Sync sessions to localStorage and backend /api/sessions whenever sessions change
   useEffect(() => {
     if (isStorageLoaded) {
       saveSessions(sessions);
+      fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessions }),
+      }).catch(() => {
+        // Ignore background sync errors if offline
+      });
     }
   }, [sessions, isStorageLoaded]);
 

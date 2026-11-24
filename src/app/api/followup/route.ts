@@ -7,12 +7,20 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { answerFollowUp } from '@/lib/synthesize';
+import { checkRateLimit } from '@/lib/rateLimit';
 import { SourceItem } from '@/types/research';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
+  const limited = checkRateLimit(req, {
+    keyPrefix: 'followup',
+    limit: 20,
+    windowMs: 60_000,
+  });
+  if (limited) return limited;
+
   try {
     const body = await req.json();
     const {
@@ -45,3 +53,4 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+

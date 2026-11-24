@@ -2,11 +2,17 @@ import { SourceType, SourceItem } from '@/types/research';
 import { BaseSourceResult, ConnectorExecutionResult, ConnectorOptions, SourceConnector } from './types';
 import { WebConnector } from './web';
 import { PapersConnector } from './papers';
+import { GitHubConnector } from './github';
+import { RedditHNConnector } from './reddit';
+import { YouTubeConnector } from './youtube';
 
-// Connectors map
+// All registered connectors
 export const connectors: Record<string, SourceConnector> = {
   web: new WebConnector(),
   papers: new PapersConnector(),
+  github: new GitHubConnector(),
+  reddit_hn: new RedditHNConnector(),
+  youtube: new YouTubeConnector(),
 };
 
 export interface SearchSourcesOptions extends ConnectorOptions {
@@ -121,4 +127,7 @@ export * from './types';
 export * from './cache';
 export * from './web';
 export * from './papers';
+export * from './github';
+export * from './reddit';
+export * from './youtube';
 

@@ -14,9 +14,9 @@
  */
 
 import { NextRequest } from 'next/server';
-import { planQueries } from '@/lib/synthesize';
-import { synthesize } from '@/lib/synthesize';
+import { planQueries, synthesize } from '@/lib/synthesize';
 import { searchSources } from '@/lib/connectors';
+import { checkRateLimit } from '@/lib/rateLimit';
 import { SourceType, ResearchDepth } from '@/types/research';
 
 export const dynamic = 'force-dynamic';
@@ -28,6 +28,13 @@ function sseEvent(type: string, data: unknown): string {
 }
 
 export async function POST(req: NextRequest) {
+  const limited = checkRateLimit(req, {
+    keyPrefix: 'research',
+    limit: 10,
+    windowMs: 60_000,
+  });
+  if (limited) return limited;
+
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
@@ -162,3 +169,4 @@ export async function POST(req: NextRequest) {
     },
   });
 }
+

@@ -39,3 +39,11 @@ class QueryCache {
 
 export const queryCache = new QueryCache();
 
+export function getCache<T>(key: string): T | null {
+  return queryCache.get<T>(key);
+}
+
+export function setCache<T>(key: string, data: T, ttlMs?: number): void {
+  queryCache.set<T>(key, data, ttlMs);
+}
+
