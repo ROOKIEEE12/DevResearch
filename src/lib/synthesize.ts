@@ -48,10 +48,19 @@ export async function callLLM(options: CallLLMOptions): Promise<string> {
 async function callGemini(apiKey: string, options: CallLLMOptions): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
-  const contents = options.messages.map((m) => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }],
-  }));
+  // Gemini requires non-empty parts and strictly alternating user/model turns
+  const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+  for (const m of options.messages) {
+    const text = (m.content || '').trim();
+    if (!text) continue;
+    const role: 'user' | 'model' = m.role === 'assistant' ? 'model' : 'user';
+    const last = contents[contents.length - 1];
+    if (last && last.role === role) {
+      last.parts[0].text += `\n\n${text}`;
+    } else {
+      contents.push({ role, parts: [{ text }] });
+    }
+  }
 
   const body: Record<string, unknown> = {
     contents,
@@ -353,12 +362,19 @@ ${sourceContext}`;
     { role: 'user', content: question },
   ];
 
-  const rawText = await callLLM({
-    system: systemPrompt,
-    messages,
-    maxTokens: 1200,
-    jsonMode: false,
-  });
+  let rawText = '';
+  try {
+    rawText = await callLLM({
+      system: systemPrompt,
+      messages,
+      maxTokens: 1200,
+      jsonMode: false,
+    });
+  } catch (err: unknown) {
+    const reason = err instanceof Error ? err.message : 'LLM unavailable';
+    console.warn('[answerFollowUp] LLM failed, using local source-matching fallback:', reason);
+    return localFollowUpFallback(question, sources, reason);
+  }
 
   const lines = rawText.split('\n');
   let citedSources: number[] = [];
@@ -381,4 +397,41 @@ ${sourceContext}`;
   }
 
   return { content, citedSources };
+}
+
+/**
+ * Local keyword-matching fallback when Gemini/Anthropic API key is missing or unreachable.
+ */
+function localFollowUpFallback(
+  question: string,
+  sources: SourceItem[],
+  reason: string
+): FollowUpResult {
+  const keywords = question
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 2);
+
+  const scored = sources
+    .map((s) => {
+      const hay = `${s.title} ${s.rawContent || s.snippet}`.toLowerCase();
+      const hits = keywords.reduce((acc, kw) => (hay.includes(kw) ? acc + 1 : acc), 0);
+      return { source: s, hits };
+    })
+    .sort((a, b) => b.hits - a.hits)
+    .slice(0, 3);
+
+  const citedSources = scored.map((x) => x.source.citationId);
+  const bullets = scored
+    .map(
+      ({ source }) =>
+        `- **${source.title}** [${source.citationId}]: ${(source.rawContent || source.snippet).slice(0, 220)}…`
+    )
+    .join('\n');
+
+  return {
+    content: `Here is what the collected raw sources say about your question:\n\n${bullets}\n\n> *Note: AI synthesis is currently in fallback mode (${reason}). Add a valid \`GEMINI_API_KEY\` in \`.env\` and restart the dev server for full conversational answers.*`,
+    citedSources,
+  };
 }
