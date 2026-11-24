@@ -76,8 +76,9 @@ Copy `.env.example` to `.env` and fill in your keys:
 
 | Variable | Required? | Purpose |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | **Required** | Claude 3.5 Sonnet for query planning, synthesis, and follow-up Q&A |
-| `ANTHROPIC_MODEL` | Optional | Defaults to `claude-3-5-sonnet-20241022` |
+| `GEMINI_API_KEY` | **Required (Free)** | Google Gemini (`gemini-2.5-flash`) for query planning, synthesis & follow-up Q&A — free at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| `GEMINI_MODEL` | Optional | Defaults to `gemini-2.5-flash` |
+| `ANTHROPIC_API_KEY` | Optional | Alternative LLM (Claude 3.5 Sonnet), used if `GEMINI_API_KEY` is not set |
 | `TAVILY_API_KEY` | Recommended | Primary Web search connector (official docs, Stack Overflow, blogs) |
 | `BRAVE_SEARCH_API_KEY` | Optional | Fallback Web search connector if Tavily is not set |
 | `GITHUB_TOKEN` | Recommended | GitHub Personal Access Token (raises search limit from 10 to 30 req/min) |

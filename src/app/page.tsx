@@ -22,15 +22,14 @@ function nextStepId(currentId: string): string {
   return idx >= 0 && idx < order.length - 1 ? order[idx + 1] : '';
 }
 
-/** Build a minimal brief when Claude synthesis is unavailable */
+/** Build a minimal brief when AI synthesis is unavailable */
 function buildFallbackBrief(problem: string, sources: SourceItem[]): ResearchBriefData {
   const topSources = sources.slice(0, 3);
   return {
-    summary: `Research on "${problem}" retrieved ${sources.length} sources. ${
-      topSources.length > 0
+    summary: `Research on "${problem}" retrieved ${sources.length} sources. ${topSources.length > 0
         ? `Top references include ${topSources.map((s) => `[${s.citationId}] ${s.title}`).join(', ')}.`
         : 'No sources retrieved — please check your API keys in .env.'
-    } Enable ANTHROPIC_API_KEY for a fully synthesized AI brief.`,
+      } Add GEMINI_API_KEY (free at aistudio.google.com) in .env for a fully synthesized AI brief.`,
     approaches: [
       {
         approach: 'Manual Source Review',
@@ -41,8 +40,8 @@ function buildFallbackBrief(problem: string, sources: SourceItem[]): ResearchBri
       },
     ],
     recommendedSolution: {
-      title: 'Configure Anthropic API Key for AI Synthesis',
-      rationale: 'Add ANTHROPIC_API_KEY to .env to enable Claude-powered synthesis with inline citations.',
+      title: 'Configure Free Gemini API Key for AI Synthesis',
+      rationale: 'Add GEMINI_API_KEY (free at https://aistudio.google.com/apikey) to .env to enable AI-powered synthesis with inline citations.',
       tradeoffs: 'Without the key, sources are still retrieved — only the AI brief is missing.',
     },
     codeSnippets: [],
@@ -148,9 +147,9 @@ export default function Home() {
       {
         id: 'planning',
         name: 'Planning Targeted Queries',
-        description: 'Claude is deconstructing your problem into specialized sub-queries for each source',
+        description: 'Deconstructing your problem into specialized sub-queries for each source',
         status: 'in_progress',
-        badge: 'Claude 3.5 Sonnet',
+        badge: 'Gemini AI',
       },
       {
         id: 'searching',
@@ -169,7 +168,7 @@ export default function Home() {
         name: 'Synthesizing Research Brief',
         description: 'Generating executive summary, approaches, pros/cons, and inline citations',
         status: 'pending',
-        badge: 'Claude 3.5 Sonnet',
+        badge: 'Gemini AI',
       },
     ];
     setProgressSteps(initialSteps);
@@ -228,16 +227,16 @@ export default function Home() {
                 prev.map((step) =>
                   step.id === id
                     ? {
-                        ...step,
-                        status: status as ProgressStepItem['status'],
-                        details: message,
-                        ...(status === 'completed' && id === 'searching'
-                          ? { badge: `${liveSources.length} sources retrieved` }
-                          : {}),
-                      }
+                      ...step,
+                      status: status as ProgressStepItem['status'],
+                      details: message,
+                      ...(status === 'completed' && id === 'searching'
+                        ? { badge: `${liveSources.length} sources retrieved` }
+                        : {}),
+                    }
                     : step.id === nextStepId(id) && status === 'completed'
-                    ? { ...step, status: 'in_progress' }
-                    : step
+                      ? { ...step, status: 'in_progress' }
+                      : step
                 )
               );
               break;
@@ -292,17 +291,17 @@ export default function Home() {
       liveSources.length > 0
         ? liveSources
         : [
-            {
-              id: `src-fallback-1`,
-              citationId: 1,
-              type: 'web',
-              title: 'MDN Web Docs — Technical Reference',
-              url: 'https://developer.mozilla.org',
-              snippet: `Reference documentation relevant to: ${problem.slice(0, 80)}`,
-              date: new Date().toISOString().slice(0, 10),
-              credibilityScore: 95,
-            },
-          ];
+          {
+            id: `src-fallback-1`,
+            citationId: 1,
+            type: 'web',
+            title: 'MDN Web Docs — Technical Reference',
+            url: 'https://developer.mozilla.org',
+            snippet: `Reference documentation relevant to: ${problem.slice(0, 80)}`,
+            date: new Date().toISOString().slice(0, 10),
+            credibilityScore: 95,
+          },
+        ];
 
     // Fallback brief if Claude synthesis failed
     const finalBrief: ResearchBriefData = researchBrief || buildFallbackBrief(problem, finalSources);
@@ -312,11 +311,11 @@ export default function Home() {
       generatedSubQueries.length > 0
         ? generatedSubQueries
         : selectedSources.map((src, i) => ({
-            id: `sq-${i + 1}`,
-            sourceType: src,
-            query: problem.slice(0, 60),
-            purpose: `${src} search`,
-          }));
+          id: `sq-${i + 1}`,
+          sourceType: src,
+          query: problem.slice(0, 60),
+          purpose: `${src} search`,
+        }));
 
     const newSession: ResearchSession = {
       id: newSessionId,

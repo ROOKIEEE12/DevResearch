@@ -71,8 +71,8 @@ export async function POST(req: NextRequest) {
           return;
         }
 
-        // ── Step 1: Query Planning (Claude) ─────────────────────────────
-        send('step', { id: 'planning', status: 'in_progress', message: 'Using Claude to plan targeted queries…' });
+        // ── Step 1: Query Planning ──────────────────────────────────────
+        send('step', { id: 'planning', status: 'in_progress', message: 'Planning targeted queries with AI…' });
 
         let plannedQueries;
         try {
@@ -134,8 +134,8 @@ export async function POST(req: NextRequest) {
           message: `Deduplicated and ranked ${sources.length} sources by credibility`,
         });
 
-        // ── Step 4: Synthesis (Claude) ───────────────────────────────────
-        send('step', { id: 'synthesizing', status: 'in_progress', message: 'Synthesizing research brief with Claude…' });
+        // ── Step 4: Synthesis ───────────────────────────────────────────
+        send('step', { id: 'synthesizing', status: 'in_progress', message: 'Synthesizing research brief…' });
 
         if (sources.length === 0) {
           send('warning', {

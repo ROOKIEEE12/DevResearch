@@ -1,19 +1,111 @@
 /**
  * synthesize.ts
- * Handles all Claude API calls:
- *   1. planQueries()   — Break a technical problem into targeted sub-queries per source
- *   2. synthesize()    — Generate a full ResearchBriefData from collected sources (streaming)
+ * Handles all LLM calls (Google Gemini primary, Anthropic Claude optional fallback):
+ *   1. planQueries()    — Break a technical problem into targeted sub-queries per source
+ *   2. synthesize()     — Generate a full ResearchBriefData from collected sources
  *   3. answerFollowUp() — Ground a follow-up question using already-collected sources
  */
 
 import Anthropic from '@anthropic-ai/sdk';
 import { SourceItem, ResearchBriefData, SourceType, ResearchDepth } from '@/types/research';
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-20241022';
 
-const MODEL = process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-20241022';
+interface LLMMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+interface CallLLMOptions {
+  system?: string;
+  messages: LLMMessage[];
+  maxTokens?: number;
+  jsonMode?: boolean;
+}
+
+/**
+ * Unified LLM caller: uses Google Gemini (free tier via GEMINI_API_KEY) if set,
+ * otherwise falls back to Anthropic Claude (ANTHROPIC_API_KEY).
+ */
+async function callLLM(options: CallLLMOptions): Promise<string> {
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+
+  if (geminiKey) {
+    return callGemini(geminiKey, options);
+  }
+
+  if (anthropicKey) {
+    return callAnthropic(anthropicKey, options);
+  }
+
+  throw new Error(
+    'No LLM API key configured. Add GEMINI_API_KEY (free at https://aistudio.google.com/apikey) to your .env file.'
+  );
+}
+
+async function callGemini(apiKey: string, options: CallLLMOptions): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+
+  const contents = options.messages.map((m) => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content }],
+  }));
+
+  const body: Record<string, unknown> = {
+    contents,
+    generationConfig: {
+      maxOutputTokens: options.maxTokens || 2500,
+      temperature: 0.3,
+      ...(options.jsonMode ? { responseMimeType: 'application/json' } : {}),
+    },
+  };
+
+  if (options.system) {
+    body.systemInstruction = {
+      parts: [{ text: options.system }],
+    };
+  }
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => res.statusText);
+    throw new Error(`Gemini API error (${res.status}): ${errText.slice(0, 300)}`);
+  }
+
+  const data = (await res.json()) as {
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string }> };
+    }>;
+  };
+
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  if (!text) {
+    throw new Error('Gemini returned an empty response.');
+  }
+  return text;
+}
+
+async function callAnthropic(apiKey: string, options: CallLLMOptions): Promise<string> {
+  const anthropic = new Anthropic({ apiKey });
+  const response = await anthropic.messages.create({
+    model: ANTHROPIC_MODEL,
+    max_tokens: options.maxTokens || 2500,
+    ...(options.system ? { system: options.system } : {}),
+    messages: options.messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+    })),
+  });
+
+  return response.content[0]?.type === 'text' ? response.content[0].text : '';
+}
 
 // ─── 1. Query Planning ─────────────────────────────────────────────────────────
 
@@ -24,7 +116,7 @@ export interface PlannedQuery {
 }
 
 /**
- * Uses Claude to decompose a developer's problem into 3-6 targeted sub-queries,
+ * Uses the LLM to decompose a developer's problem into 3-6 targeted sub-queries,
  * each tailored to a specific source type.
  */
 export async function planQueries(
@@ -66,20 +158,20 @@ Respond ONLY with valid JSON in this exact shape (no markdown, no explanation):
 }`;
 
   try {
-    const response = await anthropic.messages.create({
-      model: MODEL,
-      max_tokens: 800,
+    const text = await callLLM({
       messages: [{ role: 'user', content: prompt }],
+      maxTokens: 800,
+      jsonMode: true,
     });
 
-    const text = response.content[0].type === 'text' ? response.content[0].text : '';
-    // Strip markdown code fences if present
     const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     const parsed = JSON.parse(cleaned);
 
     if (Array.isArray(parsed.queries)) {
-      // Filter to only valid source types
-      return parsed.queries.filter((q: PlannedQuery) => availableSources.includes(q.sourceType));
+      const filtered = parsed.queries.filter((q: PlannedQuery) =>
+        availableSources.includes(q.sourceType)
+      );
+      if (filtered.length > 0) return filtered;
     }
   } catch (err) {
     console.warn('[planQueries] LLM planning failed, using rule-based fallback:', err);
@@ -108,7 +200,7 @@ function fallbackQuery(src: SourceType, problem: string): { query: string; purpo
   }
 }
 
-// ─── 2. Synthesis (Streaming) ──────────────────────────────────────────────────
+// ─── 2. Synthesis ──────────────────────────────────────────────────────────────
 
 /**
  * Build a compact source context string for the LLM prompt.
@@ -116,7 +208,7 @@ function fallbackQuery(src: SourceType, problem: string): { query: string; purpo
  */
 function buildSourceContext(sources: SourceItem[]): string {
   return sources
-    .slice(0, 20) // cap at 20 sources for prompt safety
+    .slice(0, 20)
     .map((s) => {
       const snippet = s.snippet.length > 400 ? s.snippet.slice(0, 400) + '…' : s.snippet;
       return `[${s.citationId}] (${s.type}) ${s.title}
@@ -127,20 +219,19 @@ ${snippet}`;
 }
 
 /**
- * Streams a JSON synthesis brief from Claude.
- * Yields raw text chunks so the caller can forward them as SSE.
+ * Generates a structured ResearchBriefData JSON from retrieved sources.
  */
-export async function* synthesizeStream(
+export async function synthesize(
   problem: string,
   sources: SourceItem[],
   depth: ResearchDepth
-): AsyncGenerator<string> {
+): Promise<ResearchBriefData> {
   const detailLevel =
     depth === 'quick'
-      ? '1 approach, 1 code snippet, brief summary (≤150 words)'
+      ? '1 approach, 1 code snippet, brief summary (<=150 words)'
       : depth === 'deep'
-      ? '3-4 approaches with detailed pros/cons, 2-3 code snippets, comprehensive summary (≤400 words)'
-      : '2-3 approaches, 1-2 code snippets, solid summary (≤250 words)';
+      ? '3-4 approaches with detailed pros/cons, 2-3 code snippets, comprehensive summary (<=400 words)'
+      : '2-3 approaches, 1-2 code snippets, solid summary (<=250 words)';
 
   const sourceContext = buildSourceContext(sources);
   const citationIds = sources.map((s) => s.citationId).join(', ');
@@ -202,42 +293,17 @@ Respond ONLY with a valid JSON object matching this TypeScript interface exactly
 
 Do NOT wrap in markdown code fences. Output raw JSON only.`;
 
-  const stream = await anthropic.messages.stream({
-    model: MODEL,
-    max_tokens: depth === 'quick' ? 1500 : depth === 'deep' ? 4000 : 2500,
+  const fullText = await callLLM({
     system: systemPrompt,
     messages: [{ role: 'user', content: userPrompt }],
+    maxTokens: depth === 'quick' ? 1500 : depth === 'deep' ? 4000 : 2500,
+    jsonMode: true,
   });
 
-  for await (const chunk of stream) {
-    if (
-      chunk.type === 'content_block_delta' &&
-      chunk.delta.type === 'text_delta'
-    ) {
-      yield chunk.delta.text;
-    }
-  }
-}
-
-/**
- * Non-streaming version — collects the full JSON and parses it.
- */
-export async function synthesize(
-  problem: string,
-  sources: SourceItem[],
-  depth: ResearchDepth
-): Promise<ResearchBriefData> {
-  let fullText = '';
-  for await (const chunk of synthesizeStream(problem, sources, depth)) {
-    fullText += chunk;
-  }
-
-  // Strip optional markdown fences
   const cleaned = fullText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
 
   try {
     const parsed = JSON.parse(cleaned) as ResearchBriefData;
-    // Sanitize: ensure keyPapersAndVideos only references real citation IDs
     const validIds = new Set(sources.map((s) => s.citationId));
     parsed.keyPapersAndVideos = (parsed.keyPapersAndVideos || []).filter((kp) =>
       validIds.has(kp.citationId)
@@ -245,7 +311,7 @@ export async function synthesize(
     return parsed;
   } catch {
     console.error('[synthesize] JSON parse failed. Raw response:', cleaned.slice(0, 500));
-    throw new Error('Claude returned malformed JSON. Please retry.');
+    throw new Error('LLM returned malformed JSON. Please retry.');
   }
 }
 
@@ -279,24 +345,21 @@ RULES:
 SOURCES:
 ${sourceContext}`;
 
-  const messages: Anthropic.MessageParam[] = [
+  const messages: LLMMessage[] = [
     ...conversationHistory.slice(-6).map((m) => ({
-      role: m.role as 'user' | 'assistant',
+      role: m.role,
       content: m.content,
     })),
     { role: 'user', content: question },
   ];
 
-  const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 1200,
+  const rawText = await callLLM({
     system: systemPrompt,
     messages,
+    maxTokens: 1200,
+    jsonMode: false,
   });
 
-  const rawText = response.content[0].type === 'text' ? response.content[0].text : '';
-
-  // Extract the cited JSON from the last line
   const lines = rawText.split('\n');
   let citedSources: number[] = [];
   let content = rawText;
