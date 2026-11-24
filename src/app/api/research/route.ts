@@ -1,30 +1,55 @@
 /**
- * /api/research — Full SSE research pipeline
+ * /api/research — Autonomous AI Research Agent SSE Pipeline
  *
  * POST body: { problem, selectedSources, depth }
  *
- * Streams Server-Sent Events in this order:
- *   step    — pipeline step progress updates
- *   queries — planned sub-queries from Claude
- *   sources — found sources (batches)
- *   warning — non-fatal connector warnings
- *   brief   — full synthesized JSON (ResearchBriefData)
- *   done    — { sessionId } signals completion
+ * Streams Server-Sent Events:
+ *   step    — pipeline step progress updates (nlu, planning, searching, processing, synthesizing)
+ *   nlu     — { nlu: NLUAnalysis } (intent, domain, entities, research angles)
+ *   queries — { queries: SubQuery[] }
+ *   sources — { sources: SourceItem[] } (all raw collected & enriched data)
+ *   warning — non-fatal warnings
+ *   brief   — { brief: ResearchBriefData }
+ *   done    — { sessionId }
  *   error   — fatal error message
  */
 
 import { NextRequest } from 'next/server';
-import { planQueries, synthesize } from '@/lib/synthesize';
+import {
+  analyzeContextNLU,
+  planQueriesWithNLU,
+  findGapQueries,
+  enrichRawContent,
+} from '@/lib/agent';
+import { synthesize } from '@/lib/synthesize';
 import { searchSources } from '@/lib/connectors';
 import { checkRateLimit } from '@/lib/rateLimit';
-import { SourceType, ResearchDepth } from '@/types/research';
+import { SourceType, ResearchDepth, SourceItem } from '@/types/research';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-// Helper to encode an SSE event
 function sseEvent(type: string, data: unknown): string {
   return `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+function mergeAndReindexSources(primary: SourceItem[], secondary: SourceItem[]): SourceItem[] {
+  const seen = new Set<string>();
+  const merged: SourceItem[] = [];
+
+  for (const item of [...primary, ...secondary]) {
+    const key = item.url.toLowerCase().replace(/\/+$/, '');
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(item);
+    }
+  }
+
+  merged.sort((a, b) => (b.credibilityScore || 80) - (a.credibilityScore || 80));
+  return merged.map((item, idx) => ({
+    ...item,
+    citationId: idx + 1,
+  }));
 }
 
 export async function POST(req: NextRequest) {
@@ -71,89 +96,125 @@ export async function POST(req: NextRequest) {
           return;
         }
 
-        // ── Step 1: Query Planning ──────────────────────────────────────
-        send('step', { id: 'planning', status: 'in_progress', message: 'Planning targeted queries with AI…' });
+        // ── Step 1: NLP & NLU Context Understanding ─────────────────────
+        send('step', {
+          id: 'nlu',
+          status: 'in_progress',
+          message: 'Understanding intent, technical entities & context via NLU…',
+        });
 
-        let plannedQueries;
-        try {
-          plannedQueries = await planQueries(problem, selectedSources, depth);
-        } catch (err: any) {
-          send('warning', { message: `Query planning failed: ${err.message}. Using fallback queries.` });
-          // Build simple fallback
-          plannedQueries = selectedSources.map((src) => ({
-            sourceType: src,
-            query: problem.slice(0, 60),
-            purpose: `${src} search`,
-          }));
-        }
+        const nlu = await analyzeContextNLU(problem);
+        send('nlu', { nlu });
+        send('step', {
+          id: 'nlu',
+          status: 'completed',
+          message: `Detected ${nlu.domain} (${nlu.problemType}) · ${nlu.entities.length} entities`,
+        });
 
+        // ── Step 2: Multi-Platform Query Planning ───────────────────────
+        send('step', {
+          id: 'planning',
+          status: 'in_progress',
+          message: 'Crafting tailored queries for each selected platform…',
+        });
+
+        const plannedQueries = await planQueriesWithNLU(problem, nlu, selectedSources, depth);
+        send('queries', { queries: plannedQueries });
         send('step', {
           id: 'planning',
           status: 'completed',
-          message: `Planned ${plannedQueries.length} targeted sub-queries`,
+          message: `Planned ${plannedQueries.length} platform-specific queries`,
         });
-        send('queries', { queries: plannedQueries });
 
-        // ── Step 2: Search Sources in Parallel ──────────────────────────
+        // ── Step 3: Autonomous Multi-Pass Internet Search ───────────────
         send('step', {
           id: 'searching',
           status: 'in_progress',
-          message: `Querying ${selectedSources.length} source connectors in parallel…`,
+          message: `Searching ${selectedSources.length} platforms (YouTube, Reddit, Papers, Web, GitHub)…`,
         });
 
         const limit = depth === 'quick' ? 3 : depth === 'deep' ? 8 : 5;
-        const { sources, warnings, executionResults } = await searchSources(plannedQueries, {
+        const round1 = await searchSources(plannedQueries, {
           limit,
           timeoutMs: 15000,
           depth,
         });
 
-        // Surface per-connector warnings
-        for (const w of warnings) {
+        for (const w of round1.warnings) {
           send('warning', { message: w });
         }
 
-        // Surface any connector that returned 0 results
-        for (const r of executionResults) {
-          if (r.results.length === 0 && !r.error) {
-            send('warning', { message: `Connector '${r.sourceType}' returned no results.` });
+        let allSources = round1.sources;
+        let allQueries = [...plannedQueries];
+
+        // Autonomous Round-2 gap check for standard/deep research
+        if (depth !== 'quick') {
+          const gapQueries = findGapQueries(nlu, selectedSources, round1.sources);
+          if (gapQueries.length > 0) {
+            send('step', {
+              id: 'searching',
+              status: 'in_progress',
+              message: `Round 1 found ${round1.sources.length} items — running Round 2 gap-fill on ${gapQueries.map((g) => g.sourceType).join(', ')}…`,
+            });
+
+            const round2 = await searchSources(gapQueries, {
+              limit,
+              timeoutMs: 12000,
+              depth,
+            });
+
+            allQueries = [...allQueries, ...gapQueries];
+            send('queries', { queries: allQueries });
+            allSources = mergeAndReindexSources(round1.sources, round2.sources);
           }
         }
 
         send('step', {
           id: 'searching',
           status: 'completed',
-          message: `Retrieved ${sources.length} sources`,
+          message: `Collected ${allSources.length} raw items across internet platforms`,
         });
-        send('sources', { sources });
 
-        // ── Step 3: Deduplication & Ranking (already done in searchSources) ─
+        // ── Step 4: Raw Data Extraction & Credibility Ranking ───────────
+        send('step', {
+          id: 'processing',
+          status: 'in_progress',
+          message: 'Extracting clean raw page content & ranking credibility…',
+        });
+
+        const maxFetch = depth === 'quick' ? 2 : depth === 'deep' ? 6 : 4;
+        const enrichedSources = await enrichRawContent(allSources, maxFetch);
+        send('sources', { sources: enrichedSources });
+
         send('step', {
           id: 'processing',
           status: 'completed',
-          message: `Deduplicated and ranked ${sources.length} sources by credibility`,
+          message: `Prepared ${enrichedSources.length} raw sources with full metadata`,
         });
 
-        // ── Step 4: Synthesis ───────────────────────────────────────────
-        send('step', { id: 'synthesizing', status: 'in_progress', message: 'Synthesizing research brief…' });
+        // ── Step 5: Synthesis ───────────────────────────────────────────
+        send('step', {
+          id: 'synthesizing',
+          status: 'in_progress',
+          message: 'Synthesizing research brief from collected raw data…',
+        });
 
-        if (sources.length === 0) {
-          send('warning', {
-            message: 'No sources retrieved. Synthesis may be limited. Check API keys in .env.',
-          });
+        try {
+          const brief = await synthesize(problem, enrichedSources, depth);
+          send('step', { id: 'synthesizing', status: 'completed', message: 'Research brief ready' });
+          send('brief', { brief });
+        } catch (synthErr: unknown) {
+          const msg = synthErr instanceof Error ? synthErr.message : 'Synthesis skipped';
+          send('warning', { message: `Synthesis note: ${msg}. All raw collected data is still available.` });
+          send('step', { id: 'synthesizing', status: 'completed', message: 'Raw data ready (AI synthesis skipped)' });
         }
 
-        const brief = await synthesize(problem, sources, depth);
-
-        send('step', { id: 'synthesizing', status: 'completed', message: 'Research brief ready' });
-        send('brief', { brief });
-
-        // ── Done ─────────────────────────────────────────────────────────
         const sessionId = `sess-${Date.now()}`;
         send('done', { sessionId });
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Unexpected server error during research pipeline.';
         console.error('[/api/research] Fatal error:', err);
-        send('error', { message: err.message || 'Unexpected server error during research pipeline.' });
+        send('error', { message: msg });
       } finally {
         controller.close();
       }
@@ -169,4 +230,3 @@ export async function POST(req: NextRequest) {
     },
   });
 }
-

@@ -9,7 +9,7 @@ import { ResearchBrief } from '@/components/ResearchBrief';
 import { SourceList } from '@/components/SourceList';
 import { FollowUpChat } from '@/components/FollowUpChat';
 import { ExportModal } from '@/components/ExportModal';
-import { ResearchSession, SourceType, ResearchDepth, SubQuery, SourceItem, FollowUpMessage, ResearchBriefData } from '@/types/research';
+import { ResearchSession, SourceType, ResearchDepth, SubQuery, SourceItem, FollowUpMessage, ResearchBriefData, NLUAnalysis } from '@/types/research';
 import { MOCK_SESSIONS } from '@/lib/mock-data';
 import { loadSavedSessions, saveSessions, loadActiveSessionId, saveActiveSessionId } from '@/lib/storage';
 
@@ -17,7 +17,7 @@ import { loadSavedSessions, saveSessions, loadActiveSessionId, saveActiveSession
 
 /** Returns the step that should become in_progress after the given step completes */
 function nextStepId(currentId: string): string {
-  const order = ['planning', 'searching', 'processing', 'synthesizing'];
+  const order = ['nlu', 'planning', 'searching', 'processing', 'synthesizing'];
   const idx = order.indexOf(currentId);
   return idx >= 0 && idx < order.length - 1 ? order[idx + 1] : '';
 }
@@ -109,6 +109,7 @@ export default function Home() {
   // Live Research Progress Simulation / State
   const [isSearching, setIsSearching] = useState(false);
   const [progressSteps, setProgressSteps] = useState<ProgressStepItem[]>([]);
+  const [activeNLU, setActiveNLU] = useState<NLUAnalysis | null>(null);
   const [activeSubQueries, setActiveSubQueries] = useState<SubQuery[]>([]);
   const [sourcesFoundCount, setSourcesFoundCount] = useState(0);
 
@@ -145,22 +146,29 @@ export default function Home() {
     // Initial pipeline steps
     const initialSteps: ProgressStepItem[] = [
       {
+        id: 'nlu',
+        name: 'Understanding Context (NLP / NLU)',
+        description: 'Extracting user intent, domain, technical entities, and research angles',
+        status: 'in_progress',
+        badge: 'NLU Engine',
+      },
+      {
         id: 'planning',
         name: 'Planning Targeted Queries',
-        description: 'Deconstructing your problem into specialized sub-queries for each source',
-        status: 'in_progress',
+        description: 'Deconstructing your problem into specialized sub-queries for each platform',
+        status: 'pending',
         badge: 'Gemini AI',
       },
       {
         id: 'searching',
-        name: `Querying ${selectedSources.length} Source Connectors`,
-        description: `Running parallel search across ${selectedSources.join(', ')}`,
+        name: `Searching ${selectedSources.length} Internet Platforms`,
+        description: `Autonomous multi-pass search across ${selectedSources.join(', ')}`,
         status: 'pending',
       },
       {
         id: 'processing',
-        name: 'Deduplication & Credibility Ranking',
-        description: 'Normalizing URLs, filtering noise, and scoring by credibility',
+        name: 'Collecting Raw Content & Ranking',
+        description: 'Fetching clean page text, deduplicating URLs, and scoring credibility',
         status: 'pending',
       },
       {
@@ -172,11 +180,14 @@ export default function Home() {
       },
     ];
     setProgressSteps(initialSteps);
+    setActiveNLU(null);
+    setActiveSubQueries([]);
     setSourcesFoundCount(0);
 
     // Accumulators for the SSE stream
     let liveSources: SourceItem[] = [];
     const serverWarnings: string[] = [];
+    let detectedNLU: NLUAnalysis | undefined;
     let generatedSubQueries: SubQuery[] = [];
     let newSessionId = `sess-${Date.now()}`;
     let researchBrief: ResearchBriefData | null = null;
@@ -239,6 +250,12 @@ export default function Home() {
                       : step
                 )
               );
+              break;
+            }
+            case 'nlu': {
+              const { nlu } = payload as { nlu: NLUAnalysis };
+              detectedNLU = nlu;
+              setActiveNLU(nlu);
               break;
             }
             case 'queries': {
@@ -325,6 +342,7 @@ export default function Home() {
       selectedSources,
       createdAt: new Date().toISOString(),
       status: serverWarnings.some((w) => w.startsWith('Error:')) ? 'error' : 'completed',
+      nlu: detectedNLU,
       subQueries: finalSubQueries,
       sources: finalSources,
       warnings: serverWarnings,
@@ -485,6 +503,7 @@ export default function Home() {
             <div className="p-4 sm:p-8">
               <ProgressStepper
                 steps={progressSteps}
+                nlu={activeNLU}
                 subQueries={activeSubQueries}
                 sourcesFoundCount={sourcesFoundCount}
                 onCancel={() => setIsSearching(false)}

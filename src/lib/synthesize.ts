@@ -28,7 +28,7 @@ interface CallLLMOptions {
  * Unified LLM caller: uses Google Gemini (free tier via GEMINI_API_KEY) if set,
  * otherwise falls back to Anthropic Claude (ANTHROPIC_API_KEY).
  */
-async function callLLM(options: CallLLMOptions): Promise<string> {
+export async function callLLM(options: CallLLMOptions): Promise<string> {
   const geminiKey = process.env.GEMINI_API_KEY;
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
 

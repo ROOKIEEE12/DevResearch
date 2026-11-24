@@ -8,7 +8,7 @@ import {
   Tag,
   Sparkles
 } from 'lucide-react';
-import { SubQuery } from '@/types/research';
+import { SubQuery, NLUAnalysis } from '@/types/research';
 
 export interface ProgressStepItem {
   id: string;
@@ -22,6 +22,7 @@ export interface ProgressStepItem {
 interface ProgressStepperProps {
   currentStage?: string;
   steps: ProgressStepItem[];
+  nlu?: NLUAnalysis | null;
   subQueries?: SubQuery[];
   sourcesFoundCount?: number;
   onCancel?: () => void;
@@ -29,6 +30,7 @@ interface ProgressStepperProps {
 
 export const ProgressStepper: React.FC<ProgressStepperProps> = ({
   steps,
+  nlu,
   subQueries = [],
   sourcesFoundCount = 0,
   onCancel,
@@ -99,8 +101,40 @@ export const ProgressStepper: React.FC<ProgressStepperProps> = ({
                   )}
                 </div>
                 <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                  {step.description}
+                  {step.details || step.description}
                 </p>
+
+                {/* Live NLU Context Understanding preview */}
+                {step.id === 'nlu' && nlu && (
+                  <div className="pt-2 space-y-2">
+                    <div className="p-2.5 rounded-lg bg-white dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/60 text-[11px] space-y-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-500 font-semibold text-[10px]">
+                          {nlu.domain}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 font-semibold text-[10px] uppercase">
+                          {nlu.problemType}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300 text-[10px]">
+                          Complexity: {nlu.complexity}
+                        </span>
+                      </div>
+                      <p className="text-zinc-700 dark:text-zinc-300 leading-relaxed">
+                        <strong className="text-zinc-900 dark:text-zinc-100">Intent:</strong> {nlu.intent}
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {nlu.entities.map((ent, idx) => (
+                          <span
+                            key={idx}
+                            className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 font-mono text-[10px] text-zinc-700 dark:text-zinc-300"
+                          >
+                            {ent}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Sub-queries preview during planning step */}
                 {step.id === 'planning' && subQueries.length > 0 && (
@@ -128,7 +162,7 @@ export const ProgressStepper: React.FC<ProgressStepperProps> = ({
         <span>Sources Discovered: <strong className="text-zinc-800 dark:text-zinc-200">{sourcesFoundCount}</strong></span>
         <span className="flex items-center gap-1">
           <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
-          <span>Real-time Anthropic Claude streaming</span>
+          <span>Autonomous NLU + Multi-Platform Agent</span>
         </span>
       </div>
     </div>

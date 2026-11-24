@@ -9,6 +9,7 @@ export interface SourceItem {
   title: string;
   url: string;
   snippet: string;
+  rawContent?: string; // Full/cleaned raw text collected by the research agent
   date?: string;
   author?: string;
   credibilityScore?: number; // 1-100
@@ -20,6 +21,15 @@ export interface SourceItem {
     subreddit?: string;
     journal?: string;
   };
+}
+
+export interface NLUAnalysis {
+  intent: string;
+  domain: string;
+  problemType: 'debugging' | 'architecture' | 'comparison' | 'how-to' | 'deep-dive';
+  entities: string[];
+  researchAngles: string[];
+  complexity: 'Low' | 'Medium' | 'High';
 }
 
 export interface SubQuery {
@@ -77,7 +87,8 @@ export interface ResearchSession {
   depth: ResearchDepth;
   selectedSources: SourceType[];
   createdAt: string;
-  status: 'idle' | 'planning' | 'searching' | 'processing' | 'synthesizing' | 'completed' | 'error';
+  status: 'idle' | 'nlu' | 'planning' | 'searching' | 'processing' | 'synthesizing' | 'completed' | 'error';
+  nlu?: NLUAnalysis;
   subQueries: SubQuery[];
   sources: SourceItem[];
   brief?: ResearchBriefData;

@@ -13,9 +13,11 @@ import {
   CheckCircle2, 
   XCircle, 
   Flame,
-  AlertTriangle
+  AlertTriangle,
+  Database,
+  Brain
 } from 'lucide-react';
-import { ResearchSession } from '@/types/research';
+import { ResearchSession, SourceType } from '@/types/research';
 import { formatDate } from '@/lib/utils';
 
 interface ResearchBriefProps {
@@ -30,8 +32,43 @@ export const ResearchBrief: React.FC<ResearchBriefProps> = ({
   onOpenExportModal,
 }) => {
   const [copiedCodeIdx, setCopiedCodeIdx] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<'brief' | 'raw'>('brief');
+  const [rawFilter, setRawFilter] = useState<'all' | SourceType>('all');
+  const [copiedRaw, setCopiedRaw] = useState(false);
 
   const brief = session.brief;
+
+  const handleDownloadRawJson = () => {
+    const payload = {
+      problem: session.problem,
+      nlu: session.nlu,
+      subQueries: session.subQueries,
+      collectedAt: session.createdAt,
+      totalSources: session.sources.length,
+      rawSources: session.sources,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `devresearch-raw-${session.id}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCopyRawMarkdown = () => {
+    const md = session.sources
+      .map(
+        (s) =>
+          `### [${s.citationId}] (${s.type.toUpperCase()}) ${s.title}\n- URL: ${s.url}\n${
+            s.author ? `- Author: ${s.author}\n` : ''
+          }${s.date ? `- Date: ${s.date}\n` : ''}\n${s.rawContent || s.snippet}\n`
+      )
+      .join('\n---\n\n');
+    navigator.clipboard.writeText(md);
+    setCopiedRaw(true);
+    setTimeout(() => setCopiedRaw(false), 2000);
+  };
 
   const handleCopyCode = (code: string, idx: number) => {
     navigator.clipboard.writeText(code);
@@ -106,6 +143,69 @@ export const ResearchBrief: React.FC<ResearchBriefProps> = ({
           <strong>Problem Context:</strong> {session.problem}
         </p>
 
+        {/* NLU Context Understanding Banner */}
+        {session.nlu && (
+          <div className="p-3.5 rounded-xl bg-indigo-500/5 dark:bg-indigo-950/20 border border-indigo-500/20 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                <Brain className="w-3.5 h-3.5" />
+                <span>NLU Context Understanding</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-300 text-[10px] font-semibold">
+                  {session.nlu.domain}
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-300 text-[10px] font-semibold uppercase">
+                  {session.nlu.problemType}
+                </span>
+              </div>
+            </div>
+            <p className="text-xs text-zinc-700 dark:text-zinc-300">
+              <strong>Detected Intent:</strong> {session.nlu.intent}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {session.nlu.entities.map((ent, idx) => (
+                <span
+                  key={idx}
+                  className="px-2 py-0.5 rounded-md bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 font-mono text-[10px] text-zinc-700 dark:text-zinc-300"
+                >
+                  {ent}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* View Mode Switcher: Synthesized Brief vs All Raw Collected Data */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-zinc-200/70 dark:border-zinc-800">
+          <div className="inline-flex rounded-xl bg-zinc-100 dark:bg-zinc-800/80 p-1">
+            <button
+              type="button"
+              onClick={() => setActiveTab('brief')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                activeTab === 'brief'
+                  ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                  : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+              <span>Synthesized Brief</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('raw')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                activeTab === 'raw'
+                  ? 'bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 shadow-sm'
+                  : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+              }`}
+            >
+              <Database className="w-3.5 h-3.5 text-emerald-500" />
+              <span>All Raw Collected Data ({session.sources.length})</span>
+            </button>
+          </div>
+        </div>
+
         {session.warnings && session.warnings.length > 0 && (
           <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs space-y-1">
             <div className="flex items-center gap-1.5 font-semibold">
@@ -122,6 +222,8 @@ export const ResearchBrief: React.FC<ResearchBriefProps> = ({
       </div>
 
       {/* 1. Executive Summary */}
+      {activeTab === 'brief' && (
+        <>
       <section className="p-5 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/90 shadow-sm space-y-3">
         <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
           <Sparkles className="w-4 h-4" />
@@ -348,6 +450,119 @@ export const ResearchBrief: React.FC<ResearchBriefProps> = ({
               </li>
             ))}
           </ul>
+        </section>
+      )}
+        </>
+      )}
+
+      {/* Raw Collected Data Explorer */}
+      {activeTab === 'raw' && (
+        <section className="p-5 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/90 shadow-sm space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-zinc-200 dark:border-zinc-800">
+            <div>
+              <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 flex items-center gap-2">
+                <Database className="w-4 h-4 text-emerald-500" />
+                <span>Raw Data Collected Across Internet Platforms</span>
+              </h3>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                Complete unedited data collected by the agent from YouTube, Reddit/HN, Papers, Articles, and GitHub.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleCopyRawMarkdown}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300"
+              >
+                {copiedRaw ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedRaw ? 'Copied Raw Data' : 'Copy All Raw'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadRawJson}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Download Raw JSON</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Platform filter pills */}
+          <div className="flex flex-wrap gap-1.5">
+            {(['all', 'web', 'youtube', 'reddit_hn', 'papers', 'github'] as const).map((plat) => {
+              const count =
+                plat === 'all'
+                  ? session.sources.length
+                  : session.sources.filter((s) => s.type === plat).length;
+              if (plat !== 'all' && count === 0) return null;
+              return (
+                <button
+                  key={plat}
+                  type="button"
+                  onClick={() => setRawFilter(plat)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+                    rawFilter === plat
+                      ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+                      : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+                  }`}
+                >
+                  {plat === 'all' ? 'All Platforms' : plat.replace('_', '/').toUpperCase()} ({count})
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Raw data items */}
+          <div className="space-y-3">
+            {session.sources
+              .filter((s) => rawFilter === 'all' || s.type === rawFilter)
+              .map((src) => (
+                <div
+                  key={src.id}
+                  className="p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-950/60 space-y-2"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-bold text-[11px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-500">
+                        [{src.citationId}]
+                      </span>
+                      <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300">
+                        {src.type.replace('_', '/')}
+                      </span>
+                      {src.credibilityScore && (
+                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                          {src.credibilityScore}% credibility
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+                      {src.author && <span>By {src.author}</span>}
+                      {src.date && <span>· {src.date}</span>}
+                    </div>
+                  </div>
+
+                  <a
+                    href={src.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-semibold text-sm text-zinc-900 dark:text-zinc-100 hover:text-indigo-500 inline-flex items-center gap-1.5"
+                  >
+                    <span>{src.title}</span>
+                    <ExternalLink className="w-3.5 h-3.5 shrink-0 opacity-60" />
+                  </a>
+
+                  <p className="text-xs text-zinc-600 dark:text-zinc-400 font-mono break-all">
+                    {src.url}
+                  </p>
+
+                  <div className="p-3 rounded-lg bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 text-xs text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto">
+                    {src.rawContent || src.snippet}
+                  </div>
+                </div>
+              ))}
+          </div>
         </section>
       )}
     </div>
