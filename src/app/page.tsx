@@ -9,9 +9,61 @@ import { ResearchBrief } from '@/components/ResearchBrief';
 import { SourceList } from '@/components/SourceList';
 import { FollowUpChat } from '@/components/FollowUpChat';
 import { ExportModal } from '@/components/ExportModal';
-import { ResearchSession, SourceType, ResearchDepth, SubQuery, SourceItem, FollowUpMessage } from '@/types/research';
+import { ResearchSession, SourceType, ResearchDepth, SubQuery, SourceItem, FollowUpMessage, ResearchBriefData } from '@/types/research';
 import { MOCK_SESSIONS } from '@/lib/mock-data';
 import { loadSavedSessions, saveSessions, loadActiveSessionId, saveActiveSessionId } from '@/lib/storage';
+
+// ─── Helpers ────────────────────────────────────────────────────────────────────
+
+/** Returns the step that should become in_progress after the given step completes */
+function nextStepId(currentId: string): string {
+  const order = ['planning', 'searching', 'processing', 'synthesizing'];
+  const idx = order.indexOf(currentId);
+  return idx >= 0 && idx < order.length - 1 ? order[idx + 1] : '';
+}
+
+/** Build a minimal brief when Claude synthesis is unavailable */
+function buildFallbackBrief(problem: string, sources: SourceItem[]): ResearchBriefData {
+  const topSources = sources.slice(0, 3);
+  return {
+    summary: `Research on "${problem}" retrieved ${sources.length} sources. ${
+      topSources.length > 0
+        ? `Top references include ${topSources.map((s) => `[${s.citationId}] ${s.title}`).join(', ')}.`
+        : 'No sources retrieved — please check your API keys in .env.'
+    } Enable ANTHROPIC_API_KEY for a fully synthesized AI brief.`,
+    approaches: [
+      {
+        approach: 'Manual Source Review',
+        description: 'Review the retrieved sources directly in the right panel.',
+        pros: ['Direct access to primary sources', 'No LLM hallucination risk'],
+        cons: ['Requires manual synthesis', 'Time-intensive'],
+        complexity: 'Low',
+      },
+    ],
+    recommendedSolution: {
+      title: 'Configure Anthropic API Key for AI Synthesis',
+      rationale: 'Add ANTHROPIC_API_KEY to .env to enable Claude-powered synthesis with inline citations.',
+      tradeoffs: 'Without the key, sources are still retrieved — only the AI brief is missing.',
+    },
+    codeSnippets: [],
+    keyPapersAndVideos: sources
+      .filter((s) => s.type === 'papers')
+      .slice(0, 3)
+      .map((s) => ({
+        title: s.title,
+        url: s.url,
+        type: 'paper' as const,
+        takeaway: s.snippet.slice(0, 150),
+        citationId: s.citationId,
+      })),
+    openQuestions: [
+      'What specific aspect of this problem requires the most urgent attention?',
+      'Are there existing libraries or frameworks that already solve this?',
+    ],
+  };
+}
+
+// ─── Main Component ─────────────────────────────────────────────────────────────
 
 export default function Home() {
   const [sessions, setSessions] = useState<ResearchSession[]>(MOCK_SESSIONS);
@@ -75,7 +127,7 @@ export default function Home() {
     setIsSearching(false);
   };
 
-  // Start research pipeline
+  // Start research pipeline — consumes real SSE stream from /api/research
   const handleStartResearch = async (
     problem: string,
     selectedSources: SourceType[],
@@ -89,9 +141,9 @@ export default function Home() {
       {
         id: 'planning',
         name: 'Planning Targeted Queries',
-        description: 'Deconstructing technical problem into specialized sub-queries for each source engine',
+        description: 'Claude is deconstructing your problem into specialized sub-queries for each source',
         status: 'in_progress',
-        badge: 'LLM Query Decomposition',
+        badge: 'Claude 3.5 Sonnet',
       },
       {
         id: 'searching',
@@ -102,7 +154,7 @@ export default function Home() {
       {
         id: 'processing',
         name: 'Deduplication & Credibility Ranking',
-        description: 'Normalizing URLs, filtering noise, and chunking technical documents',
+        description: 'Normalizing URLs, filtering noise, and scoring by credibility',
         status: 'pending',
       },
       {
@@ -113,135 +165,151 @@ export default function Home() {
         badge: 'Claude 3.5 Sonnet',
       },
     ];
-
     setProgressSteps(initialSteps);
     setSourcesFoundCount(0);
 
-    // Build tailored subqueries for each selected source
-    const generatedSubQueries: SubQuery[] = selectedSources.map((src, i) => {
-      let queryStr = problem;
-      let purpose = 'General technical context';
-      if (src === 'web') {
-        queryStr = `${problem.slice(0, 45)} official documentation architecture`;
-        purpose = 'Official docs, Stack Overflow and web references';
-      } else if (src === 'papers') {
-        queryStr = `${problem.slice(0, 40)} algorithm architecture`;
-        purpose = 'Academic papers from arXiv and Semantic Scholar';
-      } else if (src === 'github') {
-        queryStr = `${problem.slice(0, 35)} issue fix`;
-        purpose = 'Repository discussions and commits';
-      } else if (src === 'reddit_hn') {
-        queryStr = `${problem.slice(0, 35)} production outage postmortem`;
-        purpose = 'Engineering incident reviews and mitigations';
-      } else if (src === 'youtube') {
-        queryStr = `${problem.slice(0, 35)} deep dive talk`;
-        purpose = 'Conference talks and video transcripts';
-      }
-
-      return {
-        id: `sq-${i + 1}`,
-        sourceType: src,
-        query: queryStr,
-        purpose,
-      };
-    });
-    setActiveSubQueries(generatedSubQueries);
-
-    // Step 1: Query Planning completes
-    await new Promise((res) => setTimeout(res, 800));
-    setProgressSteps((prev) =>
-      prev.map((step) =>
-        step.id === 'planning'
-          ? { ...step, status: 'completed', details: `Decomposed into ${generatedSubQueries.length} targeted source queries` }
-          : step.id === 'searching'
-          ? { ...step, status: 'in_progress' }
-          : step
-      )
-    );
-
-    // Step 2: Query Live Connectors
+    // Accumulators for the SSE stream
     let liveSources: SourceItem[] = [];
-    let serverWarnings: string[] = [];
+    const serverWarnings: string[] = [];
+    let generatedSubQueries: SubQuery[] = [];
+    let newSessionId = `sess-${Date.now()}`;
+    let researchBrief: ResearchBriefData | null = null;
 
     try {
-      const res = await fetch('/api/connectors', {
+      const response = await fetch('/api/research', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          queries: generatedSubQueries,
-          depth,
-        }),
+        body: JSON.stringify({ problem, selectedSources, depth }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.sources && Array.isArray(data.sources)) {
-          liveSources = data.sources;
-        }
-        if (data.warnings && Array.isArray(data.warnings)) {
-          serverWarnings = data.warnings;
+      if (!response.body) throw new Error('No response body from /api/research');
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() || '';
+
+        for (const part of parts) {
+          if (!part.trim()) continue;
+          const lines = part.split('\n');
+          let eventType = '';
+          let dataLine = '';
+          for (const line of lines) {
+            if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+            if (line.startsWith('data: ')) dataLine = line.slice(6).trim();
+          }
+          if (!eventType || !dataLine) continue;
+
+          let payload: Record<string, unknown>;
+          try {
+            payload = JSON.parse(dataLine);
+          } catch {
+            continue;
+          }
+
+          switch (eventType) {
+            case 'step': {
+              const { id, status, message } = payload as { id: string; status: string; message: string };
+              setProgressSteps((prev) =>
+                prev.map((step) =>
+                  step.id === id
+                    ? {
+                        ...step,
+                        status: status as ProgressStepItem['status'],
+                        details: message,
+                        ...(status === 'completed' && id === 'searching'
+                          ? { badge: `${liveSources.length} sources retrieved` }
+                          : {}),
+                      }
+                    : step.id === nextStepId(id) && status === 'completed'
+                    ? { ...step, status: 'in_progress' }
+                    : step
+                )
+              );
+              break;
+            }
+            case 'queries': {
+              const { queries } = payload as { queries: SubQuery[] };
+              generatedSubQueries = queries;
+              setActiveSubQueries(queries);
+              break;
+            }
+            case 'sources': {
+              const { sources } = payload as { sources: SourceItem[] };
+              liveSources = sources;
+              setSourcesFoundCount(sources.length);
+              break;
+            }
+            case 'warning': {
+              const { message } = payload as { message: string };
+              serverWarnings.push(message);
+              break;
+            }
+            case 'brief': {
+              const { brief } = payload as { brief: ResearchBriefData };
+              researchBrief = brief;
+              break;
+            }
+            case 'done': {
+              const { sessionId } = payload as { sessionId: string };
+              newSessionId = sessionId;
+              break;
+            }
+            case 'error': {
+              const { message } = payload as { message: string };
+              serverWarnings.push(`Error: ${message}`);
+              console.error('[SSE Error]', message);
+              break;
+            }
+          }
         }
       }
-    } catch (err: any) {
-      console.warn('Connectors fetch error, using fallback:', err.message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Network error connecting to research API';
+      console.warn('[handleStartResearch] SSE fetch failed:', msg);
+      serverWarnings.push(`Research pipeline warning: ${msg}`);
     }
 
-    setSourcesFoundCount(liveSources.length);
+    // Build the session
+    const newTitle = problem.length > 50 ? `${problem.slice(0, 48)}…` : problem;
 
-    // Step 3: Deduplication & Ranking completes
-    setProgressSteps((prev) =>
-      prev.map((step) =>
-        step.id === 'searching'
-          ? { ...step, status: 'completed', badge: `${liveSources.length} items retrieved` }
-          : step.id === 'processing'
-          ? { ...step, status: 'in_progress' }
-          : step
-      )
-    );
+    // Fallback sources if nothing retrieved
+    const finalSources: SourceItem[] =
+      liveSources.length > 0
+        ? liveSources
+        : [
+            {
+              id: `src-fallback-1`,
+              citationId: 1,
+              type: 'web',
+              title: 'MDN Web Docs — Technical Reference',
+              url: 'https://developer.mozilla.org',
+              snippet: `Reference documentation relevant to: ${problem.slice(0, 80)}`,
+              date: new Date().toISOString().slice(0, 10),
+              credibilityScore: 95,
+            },
+          ];
 
-    await new Promise((res) => setTimeout(res, 700));
+    // Fallback brief if Claude synthesis failed
+    const finalBrief: ResearchBriefData = researchBrief || buildFallbackBrief(problem, finalSources);
 
-    setProgressSteps((prev) =>
-      prev.map((step) =>
-        step.id === 'processing'
-          ? { ...step, status: 'completed', badge: 'Deduplicated & scored' }
-          : step.id === 'synthesizing'
-          ? { ...step, status: 'in_progress' }
-          : step
-      )
-    );
-
-    // Step 4: Synthesizing completes
-    await new Promise((res) => setTimeout(res, 900));
-
-    const newSessionId = `sess-${Date.now()}`;
-    const newTitle = problem.length > 50 ? `${problem.slice(0, 48)}...` : problem;
-
-    // Use live sources if retrieved, or fallback to sensible defaults
-    const finalSources: SourceItem[] = liveSources.length > 0
-      ? liveSources
-      : [
-          {
-            id: `src-${Date.now()}-1`,
-            citationId: 1,
-            type: 'web',
-            title: `Official Technical Guide: Best Practices for ${newTitle}`,
-            url: 'https://docs.kernel.org',
-            snippet: `Comprehensive architectural overview addressing root causes, lock hierarchies, and standard mitigations for ${problem.slice(0, 60)}.`,
-            date: '2024-02-28',
-            credibilityScore: 98,
-          },
-        ];
-
-    // Build key papers list from retrieved papers
-    const retrievedPapers = finalSources.filter((s) => s.type === 'papers');
-    const keyPapersAndVideos = retrievedPapers.map((p) => ({
-      title: p.title,
-      url: p.url,
-      type: 'paper' as const,
-      takeaway: p.snippet.slice(0, 160) + '...',
-      citationId: p.citationId,
-    }));
+    // Fallback sub-queries if planning failed
+    const finalSubQueries: SubQuery[] =
+      generatedSubQueries.length > 0
+        ? generatedSubQueries
+        : selectedSources.map((src, i) => ({
+            id: `sq-${i + 1}`,
+            sourceType: src,
+            query: problem.slice(0, 60),
+            purpose: `${src} search`,
+          }));
 
     const newSession: ResearchSession = {
       id: newSessionId,
@@ -250,89 +318,11 @@ export default function Home() {
       depth,
       selectedSources,
       createdAt: new Date().toISOString(),
-      status: 'completed',
-      subQueries: generatedSubQueries,
+      status: serverWarnings.some((w) => w.startsWith('Error:')) ? 'error' : 'completed',
+      subQueries: finalSubQueries,
       sources: finalSources,
       warnings: serverWarnings,
-      brief: {
-        summary: `Analysis of "${problem}" across ${finalSources.length} retrieved sources indicates that resource locking hierarchies and concurrency spikes are primary failure vectors [1${finalSources.length > 1 ? `, 2` : ''}]. ${
-          retrievedPapers.length > 0
-            ? `Academic papers on arXiv [${retrievedPapers[0].citationId}] detail algorithmic guarantees under high contention. `
-            : ''
-        }Production guidance emphasizes strict query cancellation timeouts and dedicated queue worker decoupling.`,
-        approaches: [
-          {
-            approach: 'Non-Blocking Concurrent Execution with Timeouts',
-            description: 'Isolate operations using non-blocking primitives and explicit statement timeouts to prevent cascading worker deadlocks.',
-            pros: [
-              'Eliminates head-of-line blocking for high-traffic write paths',
-              'Deterministic failure recovery within fixed latency envelopes',
-            ],
-            cons: [
-              'Requires application-level retry logic with exponential jitter',
-            ],
-            complexity: 'Low',
-          },
-          {
-            approach: 'Dedicated Asynchronous Task Offloading Pool',
-            description: 'Offload long-running maintenance and heavy tasks to a background queue decoupled from user-facing transactions.',
-            pros: [
-              'Complete isolation of critical API request-response loops',
-              'Fine-grained concurrency controls and burst rate-limiting',
-            ],
-            cons: [
-              'Adds infrastructure dependency and queue monitoring overhead',
-            ],
-            complexity: 'Medium',
-          },
-        ],
-        recommendedSolution: {
-          title: 'Two-Tier Architecture: Strict Lock Timeouts + Dedicated Worker Pools',
-          rationale: 'Enforcing strict timeouts at the system layer guarantees that client connection pools never deplete [1]. Pairing this with background worker scheduling prevents contending operations from running during peak business hours.',
-          tradeoffs: 'Clients must handle transient timeout retries cleanly using idempotency keys.',
-          architectureNotes: 'Instrument metrics on lock wait duration and queue backlog depth to trigger proactive alerts.',
-        },
-        codeSnippets: [
-          {
-            language: 'typescript',
-            title: 'Resilient Retry Wrapper with Exponential Backoff & Jitter',
-            code: `async function executeWithResilience<T>(
-  task: () => Promise<T>,
-  maxRetries = 3,
-  baseDelayMs = 150
-): Promise<T> {
-  let attempt = 0;
-  while (true) {
-    try {
-      return await task();
-    } catch (err: any) {
-      attempt++;
-      if (attempt > maxRetries || !isRetryableError(err)) {
-        throw err;
-      }
-      // Full jitter: min(maxDelay, random_between(0, baseDelay * 2^attempt))
-      const delay = Math.random() * (baseDelayMs * Math.pow(2, attempt));
-      await new Promise((res) => setTimeout(res, delay));
-    }
-  }
-}`,
-            explanation: 'Prevents thundering herd problems during transient lock contention using randomized jitter.',
-          },
-        ],
-        keyPapersAndVideos: keyPapersAndVideos.length > 0 ? keyPapersAndVideos : [
-          {
-            title: 'Formal Analysis of Resilient Systems under Stress',
-            url: 'https://arxiv.org',
-            type: 'paper',
-            takeaway: 'Mathematical proof of deadlock avoidance in finite state automata under heavy load [1].',
-            citationId: 1,
-          },
-        ],
-        openQuestions: [
-          'What is the maximum tolerable latency threshold for client-facing transactions?',
-          'Are there read-only replicas that could handle read load to alleviate primary contention?',
-        ],
-      },
+      brief: finalBrief,
       followUps: [],
     };
 
@@ -346,8 +336,8 @@ export default function Home() {
     setIsSearching(false);
   };
 
-  // Follow-up chat submission
-  const handleSendFollowUp = (content: string) => {
+  // Follow-up chat submission — real Claude-powered grounded Q&A
+  const handleSendFollowUp = async (content: string) => {
     if (!activeSession) return;
     setIsFollowUpLoading(true);
 
@@ -358,35 +348,68 @@ export default function Home() {
       timestamp: new Date().toISOString(),
     };
 
+    // Optimistically add the user message
     const updatedSession = {
       ...activeSession,
       followUps: [...activeSession.followUps, userMsg],
     };
-
     setSessions((prev) =>
       prev.map((s) => (s.id === activeSession.id ? updatedSession : s))
     );
 
-    // Simulate grounded assistant response citing collected sources
-    setTimeout(() => {
-      const assistantMsg: FollowUpMessage = {
-        id: `fu-${Date.now()}-a`,
-        role: 'assistant',
-        content: `Based on the collected sources for this problem, when handling "${content.slice(0, 45)}":\n\n1. **Locking & Recovery:** Ensure that any failure triggers an immediate rollback before retrying, as highlighted in the official guidance [1].\n2. **Monitoring:** Review worker latency and active transactions using Prometheus metrics to catch resource exhaustion early [2, 4].\n3. **Rollback Strategy:** The upstream patch provides a safe fallback handler that preserves consistent state without data loss [2].`,
-        timestamp: new Date().toISOString(),
-        citedSources: [1, 2, 4],
-      };
+    // Build conversation history for context (last 6 turns)
+    const history = updatedSession.followUps
+      .filter((m) => m.id !== userMsg.id) // exclude the one we just added
+      .slice(-6)
+      .map((m) => ({ role: m.role, content: m.content }));
 
-      const finalSession = {
-        ...updatedSession,
-        followUps: [...updatedSession.followUps, assistantMsg],
-      };
+    let assistantContent =
+      'I could not connect to the AI service. Please ensure ANTHROPIC_API_KEY is set in .env and the dev server is running.';
+    let citedSources: number[] = [];
 
-      setSessions((prev) =>
-        prev.map((s) => (s.id === activeSession.id ? finalSession : s))
-      );
-      setIsFollowUpLoading(false);
-    }, 1000);
+    try {
+      const res = await fetch('/api/followup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: content,
+          sources: activeSession.sources,
+          history,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        assistantContent = data.content || assistantContent;
+        citedSources = Array.isArray(data.citedSources) ? data.citedSources : [];
+      } else {
+        const err = await res.json().catch(() => ({}));
+        assistantContent = `Error: ${err.error || res.statusText}`;
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Network error';
+      assistantContent = `Could not reach /api/followup: ${msg}`;
+    }
+
+    const assistantMsg: FollowUpMessage = {
+      id: `fu-${Date.now()}-a`,
+      role: 'assistant',
+      content: assistantContent,
+      timestamp: new Date().toISOString(),
+      citedSources,
+    };
+
+    const finalSession = {
+      ...updatedSession,
+      followUps: [...updatedSession.followUps, assistantMsg],
+    };
+
+    setSessions((prev) => {
+      const updated = prev.map((s) => (s.id === activeSession.id ? finalSession : s));
+      saveSessions(updated);
+      return updated;
+    });
+    setIsFollowUpLoading(false);
   };
 
   // Citation click handler (scroll to source card & highlight)
