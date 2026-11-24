@@ -34,7 +34,7 @@ export const MOCK_SESSIONS: ResearchSession[] = [
     problem: "Autovacuum worker deadlocks during concurrent partition detach and heavy INSERT traffic in PostgreSQL 15+",
     depth: "deep",
     selectedSources: ["web", "papers", "reddit_hn", "github"],
-    createdAt: new Date(Date.now() - 1000 * 60 * 35).toISOString(), // 35 min ago
+    createdAt: "2024-11-24T17:15:00.000Z",
     status: "completed",
     subQueries: [
       {
@@ -227,13 +227,13 @@ ALTER TABLE measurements_y2024m03 SET (
         id: "fu-1",
         role: "user",
         content: "What happens if DETACH PARTITION CONCURRENTLY fails midway? How do we recover?",
-        timestamp: new Date(Date.now() - 1000 * 60 * 20).toISOString(),
+        timestamp: "2024-11-24T17:30:00.000Z",
       },
       {
         id: "fu-2",
         role: "assistant",
         content: "If `DETACH CONCURRENTLY` is interrupted (e.g. by `lock_timeout` or cancellation), the partition enters an intermediate state marked as **partially detached** in `pg_inherits` [2]. In this state, queries on the parent will no longer scan the child, but the child still references the parent. You can safely either:\n1. Re-run `ALTER TABLE parent DETACH PARTITION child FINALIZE;` to complete the detach.\n2. Or run `ALTER TABLE parent DETACH PARTITION child CONCURRENTLY;` again.\nBoth commands will pick up exactly where it left off without corrupting data [1].",
-        timestamp: new Date(Date.now() - 1000 * 60 * 19).toISOString(),
+        timestamp: "2024-11-24T17:31:00.000Z",
         citedSources: [1, 2],
       },
     ],
@@ -244,7 +244,7 @@ ALTER TABLE measurements_y2024m03 SET (
     problem: "Next.js App Router streaming SSR vs Server Actions cache invalidation with revalidateTag",
     depth: "standard",
     selectedSources: ["web", "github", "reddit_hn"],
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(), // 5h ago
+    createdAt: "2024-11-24T12:00:00.000Z",
     status: "completed",
     subQueries: [
       {

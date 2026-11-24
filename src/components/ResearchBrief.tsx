@@ -82,7 +82,7 @@ export const ResearchBrief: React.FC<ResearchBriefProps> = ({
             <span className="text-[11px] font-mono uppercase px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800">
               Depth: {session.depth}
             </span>
-            <span className="text-xs text-zinc-400">
+            <span suppressHydrationWarning className="text-xs text-zinc-400">
               {formatDate(session.createdAt)}
             </span>
           </div>
